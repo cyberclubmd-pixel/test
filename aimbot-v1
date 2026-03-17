@@ -1,263 +1,278 @@
-local game, workspace = game, workspace
-local getrawmetatable, getmetatable, setmetatable, pcall, getgenv, next, tick = getrawmetatable, getmetatable, setmetatable, pcall, getgenv, next, tick
-local vector2_new, vector3_zero, cframe_new, color3_rgb, color3_hsv, drawing_new, tween_info_new = Vector2.new, Vector3.zero, CFrame.new, Color3.fromRGB, Color3.fromHSV, Drawing.new, TweenInfo.new
-local get_upvalue, mouse_move_rel, table_find, table_remove, string_lower, string_sub, math_clamp = debug.getupvalue, mousemoverel or (Input and Input.MouseMove), table.find, table.remove, string.lower, string.sub, math.clamp
+pcall(function()
+	getgenv().aimbot_environment.functions:exit()
+end)
 
-local game_metatable = getrawmetatable and getrawmetatable(game) or {
-	__index = function(self, index)
-		return self[index]
-	end,
-	__newindex = function(self, index, value)
-		self[index] = value
-	end
-}
+getgenv().aimbot_environment = {}
+local environment = getgenv().aimbot_environment
 
-local meta_index = game_metatable.__index
-local meta_newindex = game_metatable.__newindex
-local get_render_property, set_render_property = getrenderproperty or meta_index, setrenderproperty or meta_newindex
-local get_service = meta_index(game, "GetService")
+local run_service = game:GetService("RunService")
+local user_input_service = game:GetService("UserInputService")
+local http_service = game:GetService("HttpService")
+local tween_service = game:GetService("TweenService")
+local starter_gui = game:GetService("StarterGui")
+local players = game:GetService("Players")
+local camera = game:GetService("Workspace").CurrentCamera
 
-local run_service = get_service(game, "RunService")
-local user_input_service = get_service(game, "UserInputService")
-local tween_service = get_service(game, "TweenService")
-local players = get_service(game, "Players")
-
-local local_player = meta_index(players, "LocalPlayer")
-local camera = meta_index(workspace, "CurrentCamera")
-
-local find_first_child = meta_index(game, "FindFirstChild")
-local find_first_child_of_class = meta_index(game, "FindFirstChildOfClass")
-local get_descendants = meta_index(game, "GetDescendants")
-local world_to_viewport_point = meta_index(camera, "WorldToViewportPoint")
-local get_parts_obscuring_target = meta_index(camera, "GetPartsObscuringTarget")
-local get_mouse_location = meta_index(user_input_service, "GetMouseLocation")
-local get_players = meta_index(players, "GetPlayers")
-
-local required_distance = 2000
+local local_player = players.LocalPlayer
+local folder_name = "Exunys Developer"
+local files = {"Aimbot", "Configuration.json", "Drawing.json"}
 local is_typing = false
 local is_running = false
-local connections = {}
 local lock_animation = nil
-local original_sensitivity = 1
-local connect_signal = meta_index(game, "DescendantAdded").Connect
+local max_distance = 2000
+local connections = {}
 
-if getgenv().aimbot_module and getgenv().aimbot_module.exit then
-	getgenv().aimbot_module:exit()
-end
+local mouse_move = mousemoverel or (Input and Input.MouseMove)
+local teleport_queue = queue_on_teleport or syn.queue_on_teleport
 
-getgenv().aimbot_module = {
-	developer_configs = {
-		update_mode = "RenderStepped",
-		team_check_option = "TeamColor",
-		rainbow_speed = 1
-	},
-	settings = {
-		enabled = true,
-		team_check = false,
-		alive_check = true,
-		wall_check = false,
-		offset_to_move_direction = false,
-		offset_increment = 15,
-		sensitivity = 0,
-		sensitivity_mouse = 3.5,
-		lock_mode = 1,
-		lock_part = "Head",
-		trigger_key = Enum.UserInputType.MouseButton2,
-		exit_key = Enum.KeyCode.P,
-		toggle = false
-	},
-	fov_configs = {
-		enabled = true,
-		visible = true,
-		radius = 90,
-		num_sides = 60,
-		thickness = 1,
-		transparency = 1,
-		filled = false,
-		rainbow_color = false,
-		rainbow_outline_color = false,
-		color = color3_rgb(255, 255, 255),
-		outline_color = color3_rgb(0, 0, 0),
-		locked_color = color3_rgb(255, 150, 150)
-	},
-	blacklisted_players = {},
-	fov_outline = drawing_new("Circle"),
-	fov_circle = drawing_new("Circle")
+environment.settings = {
+	send_notifications = true,
+	save_settings = true,
+	reload_on_teleport = true,
+	enabled = true,
+	team_check = false,
+	alive_check = true,
+	wall_check = false,
+	sensitivity = 0,
+	third_person = false,
+	third_person_sensitivity = 3,
+	trigger_key = "MouseButton2",
+	exit_key = Enum.KeyCode.P,
+	toggle = false,
+	lock_part = "Head"
 }
 
-local env = getgenv().aimbot_module
+environment.fov_settings = {
+	enabled = true,
+	visible = true,
+	amount = 90,
+	color = "255, 255, 255",
+	locked_color = "255, 70, 70",
+	transparency = 0.5,
+	sides = 60,
+	thickness = 1,
+	filled = false
+}
 
-set_render_property(env.fov_circle, "Visible", false)
-set_render_property(env.fov_outline, "Visible", false)
+environment.fov_circle = Drawing.new("Circle")
+environment.locked_target = nil
 
-local get_fixed_username = function(search_string)
-	local result = nil
-	for _, player in next, get_players(players) do
-		local name = meta_index(player, "Name")
-		if string_sub(string_lower(name), 1, #search_string) == string_lower(search_string) then
-			result = name
+local function json_encode(data)
+	if data and type(data) == "table" then
+		return http_service:JSONEncode(data)
+	end
+end
+
+local function json_decode(data)
+	if data and type(data) == "string" then
+		return http_service:JSONDecode(data)
+	end
+end
+
+local function parse_color(color_string)
+	local r = tonumber(string.match(color_string, "([%d]+)[%s]*,[%s]*[%d]+[%s]*,[%s]*[%d]+"))
+	local g = tonumber(string.match(color_string, "[%d]+[%s]*,[%s]*([%d]+)[%s]*,[%s]*[%d]+"))
+	local b = tonumber(string.match(color_string, "[%d]+[%s]*,[%s]*[%d]+[%s]*,[%s]*([%d]+)"))
+	return Color3.fromRGB(r, g, b)
+end
+
+local function notify(title_text, description, time)
+	if environment.settings.send_notifications then
+		starter_gui:SetCore("SendNotification", {
+			Title = title_text,
+			Text = description,
+			Duration = time
+		})
+	end
+end
+
+local function save_to_file()
+	if environment.settings.save_settings then
+		local path = folder_name .. "/" .. files[1] .. "/"
+		if isfile(path .. files[2]) then
+			writefile(path .. files[2], json_encode(environment.settings))
+		end
+		if isfile(path .. files[3]) then
+			writefile(path .. files[3], json_encode(environment.fov_settings))
 		end
 	end
-	return result
 end
 
-local get_rainbow_frame_color = function()
-	local speed = env.developer_configs.rainbow_speed
-	return color3_hsv(tick() % speed / speed, 1, 1)
-end
+local function find_target()
+	if not environment.locked_target then
+		max_distance = environment.fov_settings.enabled and environment.fov_settings.amount or 2000
 
-local get_vector2_pos = function(vector)
-	return vector2_new(vector.X, vector.Y)
-end
+		for _, player in next, players:GetPlayers() do
+			if player ~= local_player then
+				local char = player.Character
+				local part = char and char:FindFirstChild(environment.settings.lock_part)
+				local hum = char and char:FindFirstChildOfClass("Humanoid")
 
-local reset_lock_state = function()
-	env.locked_target = nil
-	set_render_property(env.fov_circle, "Color", env.fov_configs.color)
-	meta_newindex(user_input_service, "MouseDeltaSensitivity", original_sensitivity)
-	if lock_animation then
-		lock_animation:Cancel()
-	end
-end
+				if char and part and hum then
+					if environment.settings.team_check and player.Team == local_player.Team then continue end
+					if environment.settings.alive_check and hum.Health <= 0 then continue end
+					if environment.settings.wall_check and #(camera:GetPartsObscuringTarget({part.Position}, char:GetDescendants())) > 0 then continue end
 
-local find_best_target = function()
-	local settings = env.settings
-	local target_part = settings.lock_part
+					local pos, on_screen = camera:WorldToViewportPoint(part.Position)
+					local mouse_pos = user_input_service:GetMouseLocation()
+					local distance = (Vector2.new(mouse_pos.X, mouse_pos.Y) - Vector2.new(pos.X, pos.Y)).Magnitude
 
-	if not env.locked_target then
-		required_distance = env.fov_configs.enabled and env.fov_configs.radius or 2000
-		for _, player in next, get_players(players) do
-			local character = meta_index(player, "Character")
-			local humanoid = character and find_first_child_of_class(character, "Humanoid")
-			if player ~= local_player and not table_find(env.blacklisted_players, meta_index(player, "Name")) and character and find_first_child(character, target_part) and humanoid then
-				local part_position = meta_index(character[target_part], "Position")
-				local team_mode = env.developer_configs.team_check_option
-				
-				if settings.team_check and meta_index(player, team_mode) == meta_index(local_player, team_mode) then continue end
-				if settings.alive_check and meta_index(humanoid, "Health") <= 0 then continue end
-				if settings.wall_check then
-					local ignore = get_descendants(meta_index(local_player, "Character"))
-					for _, part in next, get_descendants(character) do
-						ignore[#ignore + 1] = part
+					if distance < max_distance and on_screen then
+						max_distance = distance
+						environment.locked_target = player
 					end
-					if #get_parts_obscuring_target(camera, {part_position}, ignore) > 0 then continue end
-				end
-
-				local screen_pos, is_on_screen = world_to_viewport_point(camera, part_position)
-				local distance = (get_mouse_location(user_input_service) - get_vector2_pos(screen_pos)).Magnitude
-				if distance < required_distance and is_on_screen then
-					required_distance = distance
-					env.locked_target = player
 				end
 			end
 		end
-	elseif (get_mouse_location(user_input_service) - get_vector2_pos(world_to_viewport_point(camera, meta_index(meta_index(meta_index(env.locked_target, "Character"), target_part), "Position")))).Magnitude > required_distance then
-		reset_lock_state()
+	else
+		local part = environment.locked_target.Character[environment.settings.lock_part]
+		local pos = camera:WorldToViewportPoint(part.Position)
+		local mouse_pos = user_input_service:GetMouseLocation()
+		local current_dist = (Vector2.new(mouse_pos.X, mouse_pos.Y) - Vector2.new(pos.X, pos.Y)).Magnitude
+
+		if current_dist > max_distance then
+			environment.locked_target = nil
+			if lock_animation then lock_animation:Cancel() end
+			environment.fov_circle.Color = parse_color(environment.fov_settings.color)
+		end
 	end
 end
 
-local start_module = function()
-	original_sensitivity = meta_index(user_input_service, "MouseDeltaSensitivity")
-	local settings = env.settings
-	local circle = env.fov_circle
-	local outline = env.fov_outline
-	local configs = env.fov_configs
+connections.typing_start = user_input_service.TextBoxFocused:Connect(function()
+	is_typing = true
+end)
 
-	connections.render = connect_signal(meta_index(run_service, env.developer_configs.update_mode), function()
-		if configs.enabled and settings.enabled then
-			for key, value in next, configs do
-				if key ~= "Color" and pcall(get_render_property, circle, key) then
-					set_render_property(circle, key, value)
-					set_render_property(outline, key, value)
-				end
-			end
-			set_render_property(circle, "Color", (env.locked_target and configs.locked_color) or configs.rainbow_color and get_rainbow_frame_color() or configs.color)
-			set_render_property(outline, "Color", configs.rainbow_outline_color and get_rainbow_frame_color() or configs.outline_color)
-			set_render_property(outline, "Thickness", configs.thickness + 1)
-			set_render_property(circle, "Position", get_mouse_location(user_input_service))
-			set_render_property(outline, "Position", get_mouse_location(user_input_service))
+connections.typing_end = user_input_service.TextBoxFocusReleased:Connect(function()
+	is_typing = false
+end)
+
+if environment.settings.save_settings then
+	local root = folder_name
+	local sub = folder_name .. "/" .. files[1]
+	if not isfolder(root) then makefolder(root) end
+	if not isfolder(sub) then makefolder(sub) end
+
+	if not isfile(sub .. "/" .. files[2]) then
+		writefile(sub .. "/" .. files[2], json_encode(environment.settings))
+	else
+		environment.settings = json_decode(readfile(sub .. "/" .. files[2]))
+	end
+
+	if not isfile(sub .. "/" .. files[3]) then
+		writefile(sub .. "/" .. files[3], json_encode(environment.fov_settings))
+	else
+		environment.fov_settings = json_decode(readfile(sub .. "/" .. files[3]))
+	end
+
+	coroutine.wrap(function()
+		while task.wait(10) and environment.settings.save_settings do
+			save_to_file()
+		end
+	end)()
+end
+
+local function run_logic()
+	connections.render = run_service.RenderStepped:Connect(function()
+		if environment.fov_settings.enabled and environment.settings.enabled then
+			local fov = environment.fov_circle
+			local config = environment.fov_settings
+			local mouse = user_input_service:GetMouseLocation()
+
+			fov.Radius = config.amount
+			fov.Thickness = config.thickness
+			fov.Filled = config.filled
+			fov.NumSides = config.sides
+			fov.Color = parse_color(config.color)
+			fov.Transparency = config.transparency
+			fov.Visible = config.visible
+			fov.Position = Vector2.new(mouse.X, mouse.Y)
 		else
-			set_render_property(circle, "Visible", false)
-			set_render_property(outline, "Visible", false)
+			environment.fov_circle.Visible = false
 		end
 
-		if is_running and settings.enabled then
-			find_best_target()
-			local predict_offset = vector3_zero
-			if settings.offset_to_move_direction and env.locked_target then
-				local hum = find_first_child_of_class(meta_index(env.locked_target, "Character"), "Humanoid")
-				predict_offset = meta_index(hum, "MoveDirection") * (math_clamp(settings.offset_increment, 1, 30) / 10)
-			end
+		if is_running and environment.settings.enabled then
+			find_target()
 
-			if env.locked_target then
-				local target_pos = meta_index(meta_index(env.locked_target, "Character")[settings.lock_part], "Position")
-				local final_pos = target_pos + predict_offset
-				local screen_pos = world_to_viewport_point(camera, final_pos)
-
-				if settings.lock_mode == 2 then
-					mouse_move_rel((screen_pos.X - get_mouse_location(user_input_service).X) / settings.sensitivity_mouse, (screen_pos.Y - get_mouse_location(user_input_service).Y) / settings.sensitivity_mouse)
+			if environment.locked_target then
+				local part = environment.locked_target.Character[environment.settings.lock_part]
+				if environment.settings.third_person then
+					local pos = camera:WorldToViewportPoint(part.Position)
+					local mouse = user_input_service:GetMouseLocation()
+					mouse_move((pos.X - mouse.X) * environment.settings.third_person_sensitivity, (pos.Y - mouse.Y) * environment.settings.third_person_sensitivity)
 				else
-					if settings.sensitivity > 0 then
-						lock_animation = tween_service:Create(camera, tween_info_new(settings.sensitivity, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = cframe_new(camera.CFrame.Position, target_pos)})
+					if environment.settings.sensitivity > 0 then
+						lock_animation = tween_service:Create(camera, TweenInfo.new(environment.settings.sensitivity, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = CFrame.new(camera.CFrame.Position, part.Position)})
 						lock_animation:Play()
 					else
-						meta_newindex(camera, "CFrame", cframe_new(camera.CFrame.Position, final_pos))
+						camera.CFrame = CFrame.new(camera.CFrame.Position, part.Position)
 					end
-					meta_newindex(user_input_service, "MouseDeltaSensitivity", 0)
 				end
+				environment.fov_circle.Color = parse_color(environment.fov_settings.locked_color)
 			end
 		end
 	end)
 
-	connections.input_began = connect_signal(meta_index(user_input_service, "InputBegan"), function(input)
+	connections.input_start = user_input_service.InputBegan:Connect(function(input)
 		if is_typing then return end
-		if input.KeyCode == settings.exit_key then
-			env:exit()
-			return
+
+		if input.KeyCode == environment.settings.exit_key then
+			environment.functions:exit()
 		end
-		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == settings.trigger_key or input.UserInputType == settings.trigger_key then
-			if settings.toggle then
+
+		local trigger = environment.settings.trigger_key
+		if input.KeyCode == Enum.KeyCode[trigger] or input.UserInputType == Enum.UserInputType[trigger] then
+			if environment.settings.toggle then
 				is_running = not is_running
-				if not is_running then reset_lock_state() end
+				if not is_running then
+					environment.locked_target = nil
+					if lock_animation then lock_animation:Cancel() end
+					environment.fov_circle.Color = parse_color(environment.fov_settings.color)
+				end
 			else
 				is_running = true
 			end
 		end
 	end)
 
-	connections.input_ended = connect_signal(meta_index(user_input_service, "InputEnded"), function(input)
-		if settings.toggle or is_typing then return end
-		if input.UserInputType == Enum.UserInputType.Keyboard and input.KeyCode == settings.trigger_key or input.UserInputType == settings.trigger_key then
-			is_running = false
-			reset_lock_state()
+	connections.input_end = user_input_service.InputEnded:Connect(function(input)
+		if is_typing then return end
+		local trigger = environment.settings.trigger_key
+		if not environment.settings.toggle then
+			if input.KeyCode == Enum.KeyCode[trigger] or input.UserInputType == Enum.UserInputType[trigger] then
+				is_running = false
+				environment.locked_target = nil
+				if lock_animation then lock_animation:Cancel() end
+				environment.fov_circle.Color = parse_color(environment.fov_settings.color)
+			end
 		end
 	end)
 end
 
-connections.typing_on = connect_signal(meta_index(user_input_service, "TextBoxFocused"), function()
-	is_typing = true
-end)
+environment.functions = {}
 
-connections.typing_off = connect_signal(meta_index(user_input_service, "TextBoxFocusReleased"), function()
-	is_typing = false
-end)
-
-function env.exit(self)
+function environment.functions:exit()
+	save_to_file()
 	for _, connection in next, connections do
 		connection:Disconnect()
 	end
-	self.fov_circle:Remove()
-	self.fov_outline:Remove()
-	getgenv().aimbot_module = nil
+	if environment.fov_circle then
+		environment.fov_circle.Visible = false
+		environment.fov_circle:Remove()
+	end
+	getgenv().aimbot_environment = nil
 end
 
-function env.restart()
+function environment.functions:restart()
 	for _, connection in next, connections do
 		connection:Disconnect()
 	end
-	start_module()
+	run_logic()
 end
 
-env.load = start_module
-setmetatable(env, {__call = start_module})
+if not Drawing then
+	notify(folder_name, "Your exploit does not support Drawing API", 3)
+	return
+end
 
-return env()
+run_logic()
+notify(folder_name, "Aimbot loaded. Press P to fully exit.", 5)
