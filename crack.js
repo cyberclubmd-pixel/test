@@ -1,16 +1,22 @@
-const originalFetch = window.fetch;
+if (!window.originalFetch) {
+    window.originalFetch = window.fetch;
+}
+
 window.fetch = async (...args) => {
     if (args[0].includes("vercel.app") || args[0].includes("kingod")) {
-        console.log("перехват");        
-        return originalFetch("http://localhost:3000/api/process", {
-            method: 'POST', 
+        console.log("соси");
+        
+        return window.originalFetch("http://localhost:3000/api/process", {
+            method: 'POST',
             mode: 'cors',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ key: "cracked" }) 
+            body: JSON.stringify({ status: "cracked" }) 
         });
     }
-    return originalFetch(...args);
+    return window.originalFetch(...args);
 };
+
+console.log("123");
 
 console.log("актив");
 const originalFetch = window.fetch;
